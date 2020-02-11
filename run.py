@@ -6,9 +6,10 @@ import scipy.stats as st
 import factor_analyzer
 
 
-def load_data(io, sheet_name, cols):
+def load_data(io, sheet_name):
     """读取本地数据"""
-    df = pd.read_excel(io, sheet_name=sheet_name).dropna()[cols]
+    df = pd.read_excel(io, sheet_name=sheet_name).dropna()
+    df['年份'] = df['报告期'].apply(lambda x: x.year)
     return df
 
 
@@ -98,8 +99,8 @@ def pca_analysis(df, eigen_threshold=1):
 
 if __name__ == '__main__':
     # -----------------参数-----------------
-    input_name = '重大重组事件V2.xlsx'  # 读取的文件名称
-    output_name = '重大重组事件V2结果.xlsx'  # 读取的文件名称
+    input_name = '重大重组事件V3_无st.xlsx'  # 读取的文件名称
+    output_name = '重大重组事件结果.xlsx'  # 读取的文件名称
     cols = [
         '净资产收益率',
         '总资产报酬率',
@@ -117,14 +118,14 @@ if __name__ == '__main__':
 
     # -----------------运行-----------------
     input_io = pd.ExcelFile(input_name)
-    df_ls = [load_data(input_io, '财务指标t{}'.format(idx), cols) for idx in idx_ls]
+    df_ls = [load_data(input_io, '财务指标t{}'.format(idx)) for idx in idx_ls]
 
     output_io = pd.ExcelWriter(output_name)
     # 计算描述性统计量
     start_row = 0
     for i, (idx, df) in enumerate(zip(idx_ls, df_ls)):
         print('#' * 20, 't =', idx, '描述性统计量', '#' * 20)
-        describe = df.describe().T
+        describe = df[cols].describe().T
         describe.columns = pd.MultiIndex.from_product([["财务指标t{}".format(idx)], describe.columns])
         print(describe)
         print()
@@ -133,7 +134,7 @@ if __name__ == '__main__':
     # 计算KMO统计量
     print('#' * 20, 'KMO_stat', '#' * 20)
     kmo = pd.DataFrame(
-        data=np.array([KMO_stat(df) for df in df_ls]),
+        data=np.array([KMO_stat(df[cols]) for df in df_ls]),
         index=idx_ls,
         columns=pd.MultiIndex.from_product([["KMO_stat"], ['KMO_stat']]),
     )
@@ -143,7 +144,7 @@ if __name__ == '__main__':
     # 计算bartlett统计量
     print('#' * 20, 'bartlett_stat', '#' * 20)
     bartlett = pd.DataFrame(
-        data=np.array([bartlett_stat(df) for df in df_ls]),
+        data=np.array([bartlett_stat(df[cols]) for df in df_ls]),
         index=idx_ls,
         columns=pd.MultiIndex.from_product([["bartlett"], ['stat', 'dof', 'pval']]),
     )
@@ -156,7 +157,7 @@ if __name__ == '__main__':
         print('#' * 20, 't =', idx, '主成分分析', '#' * 20)
         sheet_name = '财务指标t{}'.format(idx)
         init_var, rotate_var, select_num, extract, \
-        score_corr, rotate_score_corr, factor = pca_analysis(df, eigen_threshold)
+        score_corr, rotate_score_corr, factor = pca_analysis(df[cols], eigen_threshold)
         # 写入
         extract.to_excel(output_io, sheet_name, startrow=0, startcol=0)
         init_var.to_excel(output_io, sheet_name, startrow=0, startcol=4)
@@ -170,15 +171,35 @@ if __name__ == '__main__':
         rotate_score_corr.to_excel(output_io, sheet_name, startrow=len(cols) + 5, startcol=7)
         factor.to_excel(output_io, sheet_name, startrow=2 * len(cols) + 9, startcol=0)
         score_ls.append(factor['综合得分'])
+    # 去除市场
+    to_calc = pd.concat([
+        pd.concat([df['年份'] for df in df_ls], axis=0),
+        pd.concat(score_ls, axis=0),
+    ], axis=1,
+    )  # type: pd.DataFrame
+    year_mean = to_calc.groupby(['年份']).mean()
+    year_mean.to_excel(output_io, '得分年均数据', startrow=0, startcol=0)
+    to_calc = to_calc.join(year_mean, on=['年份'], lsuffix='_原始', rsuffix='_年均')
+    to_calc['修正得分'] = to_calc['综合得分_原始'] - to_calc['综合得分_年均']
+
+    for i in range(len(df_ls)):
+        to_calc.iloc[i * df.shape[0]:(i + 1) * df.shape[0]].to_excel(
+            output_io, '财务指标t{}'.format(idx_ls[i]), startrow=2 * len(cols) + 9, startcol=6,
+        )
+
+    score_ls = [to_calc['修正得分'].iloc[i * df.shape[0]:(i + 1) * df.shape[0]] for i in range(len(df_ls))]
     # t检验
     diff_score = pd.concat([
-        score_ls[idx_ls[i + 1]] - score_ls[idx_ls[i]] for i in range(0, len(idx_ls) - 1)
+        score_ls[i + 1] - score_ls[i] for i in range(0, len(idx_ls) - 1)
     ], axis=1)
     diff_score.columns = ['t{}-t{}'.format(idx_ls[i + 1], idx_ls[i]) for i in range(0, len(idx_ls) - 1)]
     t_stat_df = pd.DataFrame(
-        data=st.ttest_1samp(diff_score, 0),
+        data=np.vstack([
+            diff_score.mean().values,
+            np.vstack([st.ttest_rel(score_ls[i + 1], score_ls[i]) for i in range(4)]).T,
+        ]),
         columns=diff_score.columns,
-        index=['statistic', 'pvalue']
+        index=['mean', 'statistic', 'pvalue']
     )
     print(t_stat_df)
     diff_score.to_excel(output_io, '得分差分t检验', startrow=0, startcol=0)
