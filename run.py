@@ -211,16 +211,26 @@ if __name__ == '__main__':
             score_ls[i + 1] - score_ls[i] for i in range(0, len(idx_ls) - 1)
         ], axis=1)
         diff_score.columns = ['t{}-t{}'.format(idx_ls[i + 1], idx_ls[i]) for i in range(0, len(idx_ls) - 1)]
-        t_stat_df = pd.DataFrame(
+        # 成对的
+        t_paired_stat_df = pd.DataFrame(
             data=np.vstack([
                 diff_score.mean().values,
                 np.vstack([st.ttest_rel(score_ls[i + 1], score_ls[i]) for i in range(4)]).T,
             ]),
-            columns=diff_score.columns,
-            index=['mean', 'statistic', 'pvalue']
+            columns=pd.MultiIndex.from_product([["成对t检验"], diff_score.columns]),
+            index=['mean', 'statistic', 'pvalue'],
+        )
+        print(t_paired_stat_df)
+        # 差分的
+        t_stat_df = pd.DataFrame(
+            data=(diff_score.mean().values,) + st.ttest_1samp(diff_score, 0),
+            columns=pd.MultiIndex.from_product([["差分t检验"], diff_score.columns]),
+            index=['mean', 'statistic', 'pvalue'],
         )
         print(t_stat_df)
-        diff_score.to_excel(output_io, '得分差分t检验', startrow=0, startcol=0 if dtype == '原始' else 10)
-        t_stat_df.to_excel(output_io, '得分差分t检验', startrow=0, startcol=5 if dtype == '原始' else 15)
+
+        diff_score.to_excel(output_io, 't检验', startrow=0, startcol=0 if dtype == '原始' else 10)
+        t_stat_df.to_excel(output_io, 't检验', startrow=0, startcol=5 if dtype == '原始' else 15)
+        t_paired_stat_df.to_excel(output_io, 't检验', startrow=6, startcol=5 if dtype == '原始' else 15)
     # 储存
     output_io.save()
