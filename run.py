@@ -74,11 +74,14 @@ def pca_analysis(df, eigen_threshold=1):
         index=df.columns,
     )
     print(score_corr)
-    factor = pd.DataFrame(
+    init_factor = pd.DataFrame(
         data=fa.transform(df),
         columns=['Factor_{}'.format(x) for x in range(1, select_num + 1)],
     )
-
+    init_factor['综合得分'] = np.dot(
+        init_factor.values,
+        init_var[('初始特征值', '方差占比')].iloc[:select_num].values.reshape(-1, 1),
+    )
     # 旋转
     fa = factor_analyzer.FactorAnalyzer(n_factors=select_num, method='principal', rotation='varimax')
     fa.fit(df)
@@ -93,8 +96,16 @@ def pca_analysis(df, eigen_threshold=1):
         index=pd.MultiIndex.from_product([["旋转特征值"], ['总计', '方差占比', '累计方差占比']]),
         columns=range(1, select_num + 1),
     ).T
-    factor['综合得分'] = np.dot(factor.values, rotate_var[('旋转特征值', '方差占比')].values.reshape(-1, 1))
-    return init_var, rotate_var, select_num, extract, score_corr, rotate_score_corr, factor
+    rotate_factor = pd.DataFrame(
+        data=fa.transform(df),
+        columns=['Factor_{}'.format(x) for x in range(1, select_num + 1)],
+    )
+    rotate_factor['综合得分'] = np.dot(
+        rotate_factor.values,
+        rotate_var[('旋转特征值', '方差占比')].iloc[:select_num].values.reshape(-1, 1),
+    )
+
+    return init_var, rotate_var, select_num, extract, score_corr, rotate_score_corr, init_factor, rotate_factor
 
 
 if __name__ == '__main__':
@@ -152,12 +163,13 @@ if __name__ == '__main__':
     print()
     bartlett.to_excel(output_io, 'kmo_bartlett', startcol=2)
     # 主成分分析
-    score_ls = []
+    init_score_ls = []
+    rotate_score_ls = []
     for idx, df in zip(idx_ls, df_ls):
         print('#' * 20, 't =', idx, '主成分分析', '#' * 20)
         sheet_name = '财务指标t{}'.format(idx)
         init_var, rotate_var, select_num, extract, \
-        score_corr, rotate_score_corr, factor = pca_analysis(df[cols], eigen_threshold)
+        score_corr, rotate_score_corr, init_factor, rotate_factor = pca_analysis(df[cols], eigen_threshold)
         # 写入
         extract.to_excel(output_io, sheet_name, startrow=0, startcol=0)
         init_var.to_excel(output_io, sheet_name, startrow=0, startcol=4)
@@ -169,40 +181,46 @@ if __name__ == '__main__':
         )
         score_corr.to_excel(output_io, sheet_name, startrow=len(cols) + 5, startcol=0)
         rotate_score_corr.to_excel(output_io, sheet_name, startrow=len(cols) + 5, startcol=7)
-        factor.to_excel(output_io, sheet_name, startrow=2 * len(cols) + 9, startcol=0)
-        score_ls.append(factor['综合得分'])
+        init_factor.to_excel(output_io, sheet_name, startrow=2 * len(cols) + 9, startcol=0)
+        init_score_ls.append(init_factor['综合得分'])
+
+        rotate_factor.to_excel(output_io, sheet_name, startrow=2 * len(cols) + 9, startcol=12)
+        rotate_score_ls.append(rotate_factor['综合得分'])
+
     # 去除市场
-    to_calc = pd.concat([
-        pd.concat([df['年份'] for df in df_ls], axis=0),
-        pd.concat(score_ls, axis=0),
-    ], axis=1,
-    )  # type: pd.DataFrame
-    year_mean = to_calc.groupby(['年份']).mean()
-    year_mean.to_excel(output_io, '得分年均数据', startrow=0, startcol=0)
-    to_calc = to_calc.join(year_mean, on=['年份'], lsuffix='_原始', rsuffix='_年均')
-    to_calc['修正得分'] = to_calc['综合得分_原始'] - to_calc['综合得分_年均']
+    for score_ls, dtype in zip([init_score_ls, rotate_score_ls], ['原始', '旋转']):
+        to_calc = pd.concat([
+            pd.concat([df['年份'] for df in df_ls], axis=0),
+            pd.concat(score_ls, axis=0),
+        ], axis=1,
+        )  # type: pd.DataFrame
+        year_mean = to_calc.groupby(['年份']).mean()
+        year_mean.to_excel(output_io, '得分年均数据', startrow=0, startcol=0 if dtype == '原始' else 3)
+        to_calc = to_calc.join(year_mean, on=['年份'], lsuffix='_原始', rsuffix='_年均')
+        to_calc['修正得分'] = to_calc['综合得分_原始'] - to_calc['综合得分_年均']
 
-    for i in range(len(df_ls)):
-        to_calc.iloc[i * df.shape[0]:(i + 1) * df.shape[0]].to_excel(
-            output_io, '财务指标t{}'.format(idx_ls[i]), startrow=2 * len(cols) + 9, startcol=6,
+        for i in range(len(df_ls)):
+            startcol = 6 if dtype == '原始' else 18
+            to_calc.iloc[i * df.shape[0]:(i + 1) * df.shape[0]].to_excel(
+                output_io, '财务指标t{}'.format(idx_ls[i]), startrow=2 * len(cols) + 9, startcol=startcol,
+            )
+
+        score_ls = [to_calc['修正得分'].iloc[i * df.shape[0]:(i + 1) * df.shape[0]] for i in range(len(df_ls))]
+        # t检验
+        diff_score = pd.concat([
+            score_ls[i + 1] - score_ls[i] for i in range(0, len(idx_ls) - 1)
+        ], axis=1)
+        diff_score.columns = ['t{}-t{}'.format(idx_ls[i + 1], idx_ls[i]) for i in range(0, len(idx_ls) - 1)]
+        t_stat_df = pd.DataFrame(
+            data=np.vstack([
+                diff_score.mean().values,
+                np.vstack([st.ttest_rel(score_ls[i + 1], score_ls[i]) for i in range(4)]).T,
+            ]),
+            columns=diff_score.columns,
+            index=['mean', 'statistic', 'pvalue']
         )
-
-    score_ls = [to_calc['修正得分'].iloc[i * df.shape[0]:(i + 1) * df.shape[0]] for i in range(len(df_ls))]
-    # t检验
-    diff_score = pd.concat([
-        score_ls[i + 1] - score_ls[i] for i in range(0, len(idx_ls) - 1)
-    ], axis=1)
-    diff_score.columns = ['t{}-t{}'.format(idx_ls[i + 1], idx_ls[i]) for i in range(0, len(idx_ls) - 1)]
-    t_stat_df = pd.DataFrame(
-        data=np.vstack([
-            diff_score.mean().values,
-            np.vstack([st.ttest_rel(score_ls[i + 1], score_ls[i]) for i in range(4)]).T,
-        ]),
-        columns=diff_score.columns,
-        index=['mean', 'statistic', 'pvalue']
-    )
-    print(t_stat_df)
-    diff_score.to_excel(output_io, '得分差分t检验', startrow=0, startcol=0)
-    t_stat_df.to_excel(output_io, '得分差分t检验', startrow=0, startcol=diff_score.shape[1] + 3)
+        print(t_stat_df)
+        diff_score.to_excel(output_io, '得分差分t检验', startrow=0, startcol=0 if dtype == '原始' else 10)
+        t_stat_df.to_excel(output_io, '得分差分t检验', startrow=0, startcol=5 if dtype == '原始' else 15)
     # 储存
     output_io.save()
