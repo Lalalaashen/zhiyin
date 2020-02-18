@@ -69,7 +69,7 @@ while True:
     try:
         to_add = input('输入变量名，空格分开').split(' ')
         ind_dummy = ['IND_{}'.format(i) for i in range(ind_ohe_trans.shape[1])]
-        year_dummy = ['YEAR_{}'.format(i) for i in range(ind_ohe_trans.shape[1])]
+        year_dummy = ['YEAR_{}'.format(i) for i in range(year_ohe_trans.shape[1])]
         xs_cols = controlled + to_add + ind_dummy + year_dummy
         xs = Xs[xs_cols]
         x = sm.add_constant(xs)  # 若模型中有截距
@@ -89,5 +89,6 @@ while True:
             df[(col, 'pvalue')] = model.pvalues[cared_index].values
             df[(col, 'beta')] = model.params[cared_index].values
         print(df)
-    except:
-        pass
+    except Exception as e:
+        print(e)
+        print('try again')
