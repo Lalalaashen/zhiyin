@@ -19,7 +19,7 @@ def read_and_chop(file_name, sheet_name=0) -> pd.DataFrame:
 
 def get_dummy(ind):
     """生成哑变量"""
-    ohe = OneHotEncoder()
+    ohe = OneHotEncoder(categories='auto')
     ohe.fit(ind)
     return ohe.transform(ind).toarray()
 
@@ -31,16 +31,16 @@ Xs = read_and_chop('重大重组事件V3_无st_尝试.xlsx', '长期绩效变量
 # # %% 数据clip
 controlled = ['RELATIVE SIZE', 'LN_ASSET', 'GROWTH', 'LEV', 'BROE', 'CASHPAY', 'OCF']
 # clip
-for c in controlled:
-    Xs[c] = Xs[c].clip(*np.percentile(Xs[c], [1, 99]))
+# for c in controlled:
+#     Xs[c] = Xs[c].clip(*np.percentile(Xs[c], [1, 99]))
 
 # %% 数据处理
 # 去除行业数量太小的
-ind_clip_num = 1
-ind_value_counts = Xs['INDU'].value_counts()
-others = ind_value_counts[ind_value_counts <= ind_clip_num].index
-for other in others:
-    Xs.loc[Xs['INDU'] == other, 'INDU'] = '其他'
+# ind_clip_num = 1
+# ind_value_counts = Xs['INDU'].value_counts()
+# others = ind_value_counts[ind_value_counts <= ind_clip_num].index
+# for other in others:
+#     Xs.loc[Xs['INDU'] == other, 'INDU'] = '其他'
 # print(Xs['INDU'].value_counts())
 
 # %% 生成哑变量
@@ -67,7 +67,10 @@ while True:
     #     # 'PE_OVER_TEN_RATIO',
     # ]
     try:
-        to_add = input('输入变量名，空格分开').split(' ')
+        input_content = input('输入变量名，空格分开')  # PE_1 PE_UNITED STATE_OVER_PE_RATIO
+        if input_content == 'exit':
+            break
+        to_add = [x for x in input_content.split(' ') if len(x) > 0]
         ind_dummy = ['IND_{}'.format(i) for i in range(ind_ohe_trans.shape[1])]
         year_dummy = ['YEAR_{}'.format(i) for i in range(year_ohe_trans.shape[1])]
         xs_cols = controlled + to_add + ind_dummy + year_dummy
@@ -85,10 +88,17 @@ while True:
         for col in y_cols:
             y = Xs[col]
             model = sm.OLS(y, x).fit()  # 构建最小二乘模型并拟合
-            # print(model.summary())  # 输出所有回归结果
             df[(col, 'pvalue')] = model.pvalues[cared_index].values
             df[(col, 'beta')] = model.params[cared_index].values
         print(df)
+        while True:
+            input_str = input('输入名称以查看全部细节')
+            if input_str in y_cols:
+                y = Xs[input_str]
+                model = sm.OLS(y, x).fit()  # 构建最小二乘模型并拟合
+                print(model.summary())  # 输出所有回归结果
+            elif len(input_str) == 0:
+                break
     except Exception as e:
         print(e)
         print('try again')
