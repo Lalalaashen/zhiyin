@@ -9,7 +9,7 @@ pd.set_option('display.max_columns', None)
 pd.set_option('display.width', 1000)
 
 
-def read_and_chop(file_name, sheet_name=0) -> pd.DataFrame:
+def read_and_chop(file_name, sheet_name) -> pd.DataFrame:
     """读取并截取有效数据"""
     df = pd.read_excel(file_name, sheet_name=sheet_name)
     if df.iloc[-1, 0] == '数据来源：Wind':
@@ -25,23 +25,43 @@ def get_dummy(ind):
 
 
 # %% 读取
-Xs = read_and_chop('重大重组事件V3_无st_尝试.xlsx', '长期绩效变量').fillna(0)
-# Xs = read_and_chop('重大重组事件V4_无st.xlsx', '长期绩效变量').fillna(0)
+file_name = '重大重组事件V3_无st_尝试.xlsx'
+sheet_name = '长期绩效变量'
+print('reading from', file_name, sheet_name)
+Xs = read_and_chop(file_name, sheet_name).fillna(0)
+# Xs = read_and_chop(file_name, '长期绩效变量').fillna(0)
 
 # # %% 数据clip
 controlled = ['RELATIVE SIZE', 'LN_ASSET', 'GROWTH', 'LEV', 'BROE', 'CASHPAY', 'OCF']
 # clip
-# for c in controlled:
-#     Xs[c] = Xs[c].clip(*np.percentile(Xs[c], [1, 99]))
+clip_str = input('是否裁剪？默认否')
+if clip_str.lower() in ['y', 'yes', '是']:
+    print('-' * 50)
+    for c in controlled:
+        print('COL', c, 'clipped')
+        Xs[c] = Xs[c].clip(*np.percentile(Xs[c], [1, 99]))
+    print('-' * 50)
 
 # %% 数据处理
 # 去除行业数量太小的
-# ind_clip_num = 1
-# ind_value_counts = Xs['INDU'].value_counts()
-# others = ind_value_counts[ind_value_counts <= ind_clip_num].index
-# for other in others:
-#     Xs.loc[Xs['INDU'] == other, 'INDU'] = '其他'
-# print(Xs['INDU'].value_counts())
+clip_str = input('行业是否裁剪？默认是')
+if len(clip_str) == 0:
+    clip_str = 'y'
+if clip_str.lower() in ['y', 'yes', '是']:
+    print('-' * 50)
+    ind_clip_str = input('裁剪的最小行业？，最小为1')
+    if len(ind_clip_str) == 0:
+        ind_clip_str = '1'
+    ind_clip_num = int(ind_clip_str)
+    assert ind_clip_num > 0
+    ind_value_counts = Xs['INDU'].value_counts()
+    others = ind_value_counts[ind_value_counts <= ind_clip_num].index
+    for other in others:
+        print('INDU', other, '设置为其他，原始行业数量', ind_value_counts[other])
+        Xs.loc[Xs['INDU'] == other, 'INDU'] = '其他'
+    print('-' * 50)
+    print(Xs['INDU'].value_counts())
+    print('-' * 50)
 
 # %% 生成哑变量
 # 行业哑变量
@@ -71,9 +91,10 @@ while True:
         if input_content == 'exit':
             break
         to_add = [x for x in input_content.split(' ') if len(x) > 0]
+        assert len(to_add) > 0, '没有有效的输入列'
         ind_dummy = ['IND_{}'.format(i) for i in range(ind_ohe_trans.shape[1])]
         year_dummy = ['YEAR_{}'.format(i) for i in range(year_ohe_trans.shape[1])]
-        xs_cols = controlled + to_add + ind_dummy + year_dummy
+        xs_cols = to_add + controlled + ind_dummy + year_dummy
         xs = Xs[xs_cols]
         x = sm.add_constant(xs)  # 若模型中有截距
         cared = to_add
