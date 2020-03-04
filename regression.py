@@ -49,7 +49,7 @@ if len(clip_str) == 0:
     clip_str = 'y'
 if clip_str.lower() in ['y', 'yes', '是']:
     print('-' * 50)
-    ind_clip_str = input('裁剪的最小行业？，最小为1')
+    ind_clip_str = input('裁剪的最小行业？+-*最小为1')
     if len(ind_clip_str) == 0:
         ind_clip_str = '1'
     ind_clip_num = int(ind_clip_str)
