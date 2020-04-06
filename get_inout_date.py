@@ -133,24 +133,40 @@ w.stop()
 
 # %% 添加列
 df = pd.read_excel('私募存续期数据.xlsx')
+df['首次披露日期'] = df['首次披露日期'].apply(lambda x: int(x.strftime('%Y%m%d')))
 # 读取
 with open('in_out_dict.pkl', 'rb') as f:
     in_out_dict = pickle.load(f)
 # 计算最早进入时间
-new_col = '并购当年PE最早进入时间'
-df[new_col] = None
+earliest_entry = '并购当年PE最早进入时间'
+mean_year_len = '并购当年PE平均持股年限'
+to_add_cols = [earliest_entry, mean_year_len]
+for col in to_add_cols:
+    df[col] = None
+
 for i in trange(stock_info.shape[0]):
     code = stock_info.loc[i, '股票代码']
     report_date = stock_info.loc[i, '报告期']
     if (code, report_date) in in_out_dict:
         temp_dict = in_out_dict[(code, report_date)]
         holders = stock_info.loc[i, [f'第{j}大股东' for j in range(1, 11)]]
-        df.loc[i, new_col] = np.nanmin([
-            int(temp_dict[x][0]) if x in temp_dict else np.nan for x in holders
-        ])
-new_cols = list(df.columns)
-new_cols.insert(5, new_cols.pop(-1))
-for col in ['报告期', 'IPO_DATE', new_col] + [x for x in df.columns if x.startswith('START') or x.startswith('END')]:
+        start_years = np.array([int(temp_dict[x][0]) if x in temp_dict else np.nan for x in holders])
+        year_lens = np.array(
+            [(df.loc[i, '最新披露日期'] - pd.to_datetime(temp_dict[x][0])).days if x in temp_dict else np.nan for x in holders]
+        ) / 365.0
+        mask = start_years > df.loc[i, '首次披露日期']
+        start_years[mask] = np.nan
+        year_lens[mask] = np.nan
+        df.loc[i, earliest_entry] = np.nanmin(start_years)
+        df.loc[i, mean_year_len] = np.nanmean(year_lens)
+
+for col in ['报告期', 'IPO_DATE',
+            earliest_entry] + [x for x in df.columns if x.startswith('START') or x.startswith('END')]:
     df[col] = df[col].apply(lambda x: str(int(x)) if not np.isnan(x) else x)
     df[col] = df[col].apply(lambda x: f'{x[:4]}/{x[4:6]}/{x[6:]}' if isinstance(x, str) else x)
-df[new_cols].to_excel('私募存续期数据_1.xlsx', index=False)
+df['PE_TIME'] = (df['最新披露日期'] - pd.to_datetime(df[earliest_entry])).apply(lambda x: x.days) / 365.
+new_cols = list(df.columns)
+for _ in to_add_cols + ['PE_TIME']:
+    new_cols.insert(5, new_cols.pop(-1))
+df = df[new_cols]
+df.to_excel('私募存续期数据_1.xlsx', index=False)
